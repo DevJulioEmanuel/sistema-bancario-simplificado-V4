@@ -1,4 +1,4 @@
-# 🏦 Sistema Bancário Simplificado e Distribuído — V3
+# 🏦 Sistema Bancário Simplificado e Distribuído — V4
 
 > **Disciplina:** Sistemas Distribuídos
 > **Autor:** Arthur Lelis Uchoa e Julio Emanuel Pereira da Silva
