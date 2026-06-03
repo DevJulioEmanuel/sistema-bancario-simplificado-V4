@@ -3,19 +3,25 @@ package handler
 import (
 	dtorequest "banco-api/internal/dto/request"
 	dtoresponse "banco-api/internal/dto/response"
+	"banco-api/internal/publisher"
 	"banco-api/internal/service"
 	"net/http"
+	"shared"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
 
 type ContaHandler struct {
-	service *service.ContaService
+	service   *service.ContaService
+	publisher *publisher.Publisher
 }
 
-func NewContaHandler(service *service.ContaService) *ContaHandler {
-	return &ContaHandler{service: service}
+func NewContaHandler(service *service.ContaService, publisher *publisher.Publisher) *ContaHandler {
+	return &ContaHandler{
+		service:   service,
+		publisher: publisher,
+	}
 }
 
 func (h *ContaHandler) ObterDados(c *gin.Context) {
@@ -40,7 +46,7 @@ func (h *ContaHandler) ObterDados(c *gin.Context) {
 		Saldo:   conta.Saldo,
 		Tipo:    tipo,
 		Limite:  1200,
-		Taxa: 0.005,
+		Taxa:    0.005,
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -66,11 +72,12 @@ func (h *ContaHandler) Pagar(c *gin.Context) {
 		return
 	}
 
-	conta, err := h.service.Pagar(
-		numero,
-		req.Descricao,
-		req.Valor,
-	)
+	err = h.publisher.Publish(c, shared.FilaPagamento, shared.Transacao{
+		Tipo:            "pagamento",
+		NumeroConta:     numero,
+		Valor:           req.Valor,
+		NumContaDestino: 0,
+	})
 
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -79,16 +86,9 @@ func (h *ContaHandler) Pagar(c *gin.Context) {
 		return
 	}
 
-	response := dtoresponse.PagamentoResponse{
-		Mensagem:    "pagamento realizado com sucesso",
-		NumeroConta: conta.Numero,
-		Descricao:   req.Descricao,
-		ValorPago:   req.Valor,
-		SaldoAtual:  conta.Saldo,
-	}
-
-	c.JSON(http.StatusOK, response)
+	c.JSON(http.StatusAccepted, gin.H{"mensagem": "pagamento enviado para processamento"})
 }
+
 func (h *ContaHandler) Depositar(c *gin.Context) {
 	numero, _ := strconv.Atoi(c.Param("num"))
 
@@ -99,22 +99,19 @@ func (h *ContaHandler) Depositar(c *gin.Context) {
 		return
 	}
 
-	conta, err := h.service.Depositar(numero, req.Valor)
+	err := h.publisher.Publish(c, shared.FilaDeposito, shared.Transacao{
+		Tipo:            "deposito",
+		NumeroConta:     numero,
+		Valor:           req.Valor,
+		NumContaDestino: 0,
+	})
 
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"erro": err.Error()})
 		return
 	}
 
-	response := dtoresponse.MovimentacaoResponse{
-		Mensagem:         "depósito realizado com sucesso",
-		NumeroConta:      conta.Numero,
-		TipoOperacao:     "deposito",
-		ValorMovimentado: req.Valor,
-		SaldoAtual:       conta.Saldo,
-	}
-
-	c.JSON(http.StatusOK, response)
+	c.JSON(http.StatusAccepted, gin.H{"mensagem": "depósito enviado para processamento"})
 }
 
 func (h *ContaHandler) Sacar(c *gin.Context) {
@@ -127,22 +124,18 @@ func (h *ContaHandler) Sacar(c *gin.Context) {
 		return
 	}
 
-	conta, err := h.service.Sacar(numero, req.Valor)
+	err := h.publisher.Publish(c, shared.FilaSaque, shared.Transacao{
+		Tipo:            "saque",
+		NumeroConta:     numero,
+		Valor:           req.Valor,
+		NumContaDestino: 0,
+	})
 
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"erro": err.Error()})
 		return
 	}
-
-	response := dtoresponse.MovimentacaoResponse{
-		Mensagem:         "saque realizado com sucesso",
-		NumeroConta:      conta.Numero,
-		TipoOperacao:     "saque",
-		ValorMovimentado: req.Valor,
-		SaldoAtual:       conta.Saldo,
-	}
-
-	c.JSON(http.StatusOK, response)
+	c.JSON(http.StatusAccepted, gin.H{"mensagem": "saque enviado para processamento"})
 }
 
 func (h *ContaHandler) Transferir(c *gin.Context) {
@@ -155,22 +148,19 @@ func (h *ContaHandler) Transferir(c *gin.Context) {
 		return
 	}
 
-	conta, err := h.service.Transferir(numero, req.NumDestino, req.Valor)
+	err := h.publisher.Publish(c, shared.FilaTransferencia, shared.Transacao{
+		Tipo:            "transferencia",
+		NumeroConta:     numero,
+		Valor:           req.Valor,
+		NumContaDestino: req.NumDestino,
+	})
 
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"erro": err.Error()})
 		return
 	}
 
-	response := dtoresponse.TransferenciaResponse{
-		Mensagem:         "transferência realizada com sucesso",
-		ContaOrigem:      conta.Numero,
-		ContaDestino:     req.NumDestino,
-		ValorTransferido: req.Valor,
-		SaldoAtualOrigem: conta.Saldo,
-	}
-
-	c.JSON(http.StatusOK, response)
+	c.JSON(http.StatusAccepted, gin.H{"mensagem": "transferência enviada para processamento"})
 }
 
 func (h *ContaHandler) Extrato(c *gin.Context) {
