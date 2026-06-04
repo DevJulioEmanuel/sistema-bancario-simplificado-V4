@@ -20,6 +20,9 @@ func SetupRoutes(
 	}
 
 	contas := r.Group("/contas/:num")
+
+	contas.Use(middleware.JWTMiddleware())
+
 	{
 		contas.GET("/", contaHandler.ObterDados)
 		contas.POST("/pagamento", contaHandler.Pagar)

@@ -58,9 +58,24 @@ func (h *ClienteHandler) Login(c *gin.Context) {
 		return
 	}
 
+	claims := jwt.MapClaims{
+		"conta_numero": conta.Numero,
+		"exp": time.Now().Add(time.Minute * 15).Unix(),
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+
+	tokenString, err := token.SignedString(jwtKey)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"erro": "Falha ao gerar token de acesso"})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"mensagem": "login realizado",
 		"nome":     conta.Titular.Nome,
 		"numero": conta.Numero,
+		"token": tokenString,
 	})
 }

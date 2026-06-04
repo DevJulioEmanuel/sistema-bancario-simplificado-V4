@@ -3,6 +3,7 @@ package service
 import (
 	"banco-api/internal/model"
 	"banco-api/internal/repository"
+	"golang.org/x/crypto/bcrypt"
 	"errors"
 )
 
@@ -32,10 +33,15 @@ func (s *ClienteService) Cadastrar(
 
 	if !existe {
 
+		hash, err := bcrypt.GenerateFromPassword([]byte(senha), bcrypt.DefaultCost)
+		if err != nil {
+			return nil, errors.New("erro ao processar a segurança da senha")
+		}
+
 		cliente = &model.Cliente{
 			Nome:  nome,
 			CPF:   cpf,
-			Senha: senha,
+			Senha: string(hash),
 		}
 
 		s.clienteRepo.Salvar(cliente)
@@ -73,11 +79,12 @@ func (s *ClienteService) Login(
 	cliente, existeCPF := s.clienteRepo.BuscarPorCPF(cpf)
 
 	if !existeCPF {
-		return nil, errors.New("cliente não encontrado")
+		return nil, errors.New("Credenciais inválidas")
 	}
 
-	if cliente.Senha != senha {
-		return nil, errors.New("senha incorreta")
+	err := bcrypt.CompareHashAndPassword([]byte(cliente.Senha), []byte(senha))
+	if err != nil {
+		return nil, errors.New("credenciais inválidas")
 	}
 
 	conta, existeConta := s.contaRepo.BuscarPorClienteETipo(cpf, tipo)
