@@ -9,6 +9,7 @@ from models import CadastroResponse, LoginResponse, ContaResponse, PagamentoResp
 class BancoApiClient:
     def __init__(self, base_url="http://localhost:8080"):
         self.base_url = base_url
+        self.session = requests.Session()
 
     def _enviar(self, metodo, endpoint, payload=None):
         try:
@@ -19,7 +20,7 @@ class BancoApiClient:
             else:
                 json_data = payload
 
-            response = requests.request(metodo, url, json=json_data)
+            response = self.session.request(metodo, url, json=json_data)
             response.raise_for_status()
             return response.json()
 
@@ -35,6 +36,11 @@ class BancoApiClient:
 
     def login(self, req: LoginRequest) -> LoginResponse:
         response = self._enviar("POST", "/clientes/login", req)
+
+        token = response.get("token")
+        if token:
+            self.session.headers.update({"Authorization": f"Bearer {token}"})
+
         return LoginResponse(**response)
 
     def obterDados(self, numero: int) -> ContaResponse:
