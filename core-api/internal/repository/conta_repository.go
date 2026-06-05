@@ -25,7 +25,7 @@ func (r *ContaRepository) Salvar(conta *shared.Conta) error {
 
 func (r *ContaRepository) BuscarPorNumero(numero int) (*shared.Conta, bool) {
 	var conta shared.Conta
-	result := r.db.Preload("Titular").Where("numero = ?", numero).First(&conta)
+	result := r.db.Preload("Titular").Preload("Historico").Where("numero = ?", numero).First(&conta)	
 	if result.Error != nil {
 		return nil, false
 	}

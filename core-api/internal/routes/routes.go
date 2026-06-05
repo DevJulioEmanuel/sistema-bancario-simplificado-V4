@@ -34,6 +34,8 @@ func SetupRoutes(
 		contas.GET("/rendimento/:meses", contaHandler.CalcularRendimento)
 	}
 
+	r.GET("/ws/:num", handler.HandleWebSocket)
+
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"status": "ok",

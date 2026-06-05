@@ -12,4 +12,5 @@ type TransacaoEvent struct {
 	NumeroConta     int     `json:"numero"`
 	Valor           float64 `json:"valor"`
 	NumContaDestino int     `json:"numDestino"`
+	Descricao       string  `json:"descricao"`
 }

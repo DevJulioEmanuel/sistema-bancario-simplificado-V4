@@ -85,10 +85,10 @@ func main() {
 			err := json.Unmarshal(msg.Body, &transacao)
 			if err != nil {
 				log.Printf("erro ao deserializar: %v", err)
-				msg.Nack(false, true) // recoloca na fila
+				msg.Nack(false, true)
 				continue
 			}
-			err = proc.ProcessarDeposito(transacao)
+			err = proc.ProcessarDeposito(canal, transacao)
 			if err != nil {
 				log.Printf("erro ao processar depósito: %v", err)
 				msg.Nack(false, true)
@@ -103,7 +103,7 @@ func main() {
 				msg.Nack(false, true)
 				continue
 			}
-			err = proc.ProcessarSaque(transacao)
+			err = proc.ProcessarSaque(canal, transacao)
 			if err != nil {
 				log.Printf("erro ao processar saque: %v", err)
 				msg.Nack(false, false)
@@ -118,7 +118,7 @@ func main() {
 				msg.Nack(false, true)
 				continue
 			}
-			err = proc.ProcessarTransferencia(transacao)
+			err = proc.ProcessarTransferencia(canal, transacao)
 			if err != nil {
 				log.Printf("erro ao processar transferência: %v", err)
 				msg.Nack(false, false)
@@ -133,7 +133,7 @@ func main() {
 				msg.Nack(false, true)
 				continue
 			}
-			err = proc.ProcessarPagamento(transacao)
+			err = proc.ProcessarPagamento(canal, transacao)
 			if err != nil {
 				log.Printf("erro ao processar pagamento: %v", err)
 				msg.Nack(false, false)

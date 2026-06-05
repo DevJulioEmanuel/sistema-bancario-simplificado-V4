@@ -77,6 +77,7 @@ func (h *ContaHandler) Pagar(c *gin.Context) {
 		NumeroConta:     numero,
 		Valor:           req.Valor,
 		NumContaDestino: 0,
+		Descricao: req.Descricao,
 	})
 
 	if err != nil {

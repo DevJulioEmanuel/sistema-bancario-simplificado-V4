@@ -59,3 +59,7 @@ func (p *Publisher) Publish(ctx context.Context, queueName string, transacao sha
 		},
 	)
 }
+
+func (p *Publisher) Channel() *amqp.Channel {
+	return p.canal
+}

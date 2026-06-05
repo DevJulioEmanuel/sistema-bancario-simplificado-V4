@@ -7,6 +7,7 @@ import (
 	"banco-api/internal/repository"
 	"banco-api/internal/routes"
 	"banco-api/internal/service"
+	"banco-api/internal/consumer"
 	"log"
 	"os"
 	"time"
@@ -55,6 +56,8 @@ func main() {
 
 	clienteHandler := handler.NewClienteHandler(clienteService)
 	contaHandler := handler.NewContaHandler(contaService, pub)
+
+	go consumer.IniciarConsumidorResposta(pub.Channel())
 
 	r := gin.Default()
 
