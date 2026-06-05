@@ -12,6 +12,7 @@ func SetupRoutes(
 	r *gin.Engine,
 	clienteHandler *handler.ClienteHandler,
 	contaHandler *handler.ContaHandler,
+	notificacaoHandler *handler.NotificacaoHandler,
 ) {
 
 	clientes := r.Group("/clientes")
@@ -32,6 +33,7 @@ func SetupRoutes(
 		contas.POST("/transferir", contaHandler.Transferir)
 		contas.GET("/extrato", contaHandler.Extrato)
 		contas.GET("/rendimento/:meses", contaHandler.CalcularRendimento)
+		contas.GET("/notificacoes", notificacaoHandler.GetNotificacoes)
 	}
 
 	r.GET("/ws/:num", handler.HandleWebSocket)

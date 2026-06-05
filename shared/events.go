@@ -1,6 +1,7 @@
 package shared
 
 const (
+	FilaNotificacao   = "notificacao"
 	FilaDeposito      = "deposito"
 	FilaSaque         = "saque"
 	FilaTransferencia = "transferencia"
@@ -13,4 +14,10 @@ type TransacaoEvent struct {
 	Valor           float64 `json:"valor"`
 	NumContaDestino int     `json:"numDestino"`
 	Descricao       string  `json:"descricao"`
+}
+
+type NotificacaoEvent struct {
+	ContaNum int    `json:"conta_num"`
+	Mensagem string `json:"mensagem"`
+	Sucesso  bool   `json:"sucesso"`
 }

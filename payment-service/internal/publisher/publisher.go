@@ -2,8 +2,10 @@ package publisher
 
 import (
 	"encoding/json"
-    "log"
-    amqp "github.com/rabbitmq/amqp091-go"
+	"log"
+	"shared"
+
+	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 type RespostaFaturamento struct {
@@ -13,8 +15,8 @@ type RespostaFaturamento struct {
 
 func EnviarRespostaDeSaldo(ch *amqp.Channel, numeroConta int, novoSaldo float64) {
 	q, err := ch.QueueDeclare(
-		"fila_resposta_pagamentos", 
-		true,                       
+		"fila_resposta_pagamentos",
+		true,
 		false,
 		false,
 		false,
@@ -36,8 +38,8 @@ func EnviarRespostaDeSaldo(ch *amqp.Channel, numeroConta int, novoSaldo float64)
 	}
 
 	err = ch.Publish(
-		"",     
-		q.Name, 
+		"",
+		q.Name,
 		false,
 		false,
 		amqp.Publishing{
@@ -47,5 +49,34 @@ func EnviarRespostaDeSaldo(ch *amqp.Channel, numeroConta int, novoSaldo float64)
 	)
 	if err != nil {
 		log.Printf("Erro ao publicar resposta no RabbitMQ: %v", err)
+	}
+}
+
+func EnviarNotificacao(canal *amqp.Channel, contaNum int, mensagem string, sucesso bool) {
+	evento := shared.NotificacaoEvent{
+		ContaNum: contaNum,
+		Mensagem: mensagem,
+		Sucesso:  sucesso,
+	}
+
+	body, err := json.Marshal(evento)
+	if err != nil {
+		log.Printf("Erro ao serializar notificação: %v", err)
+		return
+	}
+
+	err = canal.Publish(
+		"",
+		shared.FilaNotificacao,
+		false,
+		false,
+		amqp.Publishing{
+			ContentType: "application/json",
+			Body:        body,
+		},
+	)
+
+	if err != nil {
+		log.Printf("Erro ao publicar notificação na fila: %v", err)
 	}
 }

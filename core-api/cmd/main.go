@@ -1,13 +1,13 @@
 package main
 
 import (
+	"banco-api/internal/consumer"
 	"banco-api/internal/db"
 	"banco-api/internal/handler"
 	"banco-api/internal/publisher"
 	"banco-api/internal/repository"
 	"banco-api/internal/routes"
 	"banco-api/internal/service"
-	"banco-api/internal/consumer"
 	"log"
 	"os"
 	"time"
@@ -58,10 +58,13 @@ func main() {
 	contaHandler := handler.NewContaHandler(contaService, pub)
 
 	go consumer.IniciarConsumidorResposta(pub.Channel())
+	go consumer.IniciarConsumidorNotificacoes(pub.Channel(), db)
 
 	r := gin.Default()
 
-	routes.SetupRoutes(r, clienteHandler, contaHandler)
+	notificacaoHandler := handler.NewNotificacaoHandler(db)
+
+	routes.SetupRoutes(r, clienteHandler, contaHandler, notificacaoHandler)
 
 	r.Run(":8080")
 }

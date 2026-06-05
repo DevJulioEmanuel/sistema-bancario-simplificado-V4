@@ -1,6 +1,7 @@
 package db
 
 import (
+	"banco-api/internal/model"
 	"shared"
 
 	"github.com/glebarez/sqlite"
@@ -12,7 +13,7 @@ func NewDB(caminho string) (*gorm.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	err = db.AutoMigrate(&shared.Cliente{}, &shared.Conta{}, &shared.Transacao{})
+	err = db.AutoMigrate(&shared.Cliente{}, &shared.Conta{}, &shared.Transacao{}, &model.Notificacao{})
 	if err != nil {
 		return nil, err
 	}
