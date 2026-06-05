@@ -14,7 +14,7 @@ func JWTMiddleware() gin.HandlerFunc {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"erro": "Token não fornecido"})
-			c.Abort() // Trava a requisição aqui
+			c.Abort()
 			return
 		}
 
