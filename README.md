@@ -1,15 +1,16 @@
 # 🏦 Sistema Bancário Simplificado e Distribuído — V4
 
-> **Disciplina:** Sistemas Distribuídos
-> **Autor:** Arthur Lelis Uchoa e Julio Emanuel Pereira da Silva
-> **Arquitetura:** Microserviços / Cliente-Servidor (REST API Poliglota)
+> **Disciplina:** Sistemas Distribuídos — UFC Quixadá
+> **Autores:** Arthur Lelis Uchoa e Julio Emanuel Pereira da Silva
+> **Arquitetura:** Microserviços com Comunicação Indireta via Filas de Mensagens
 
-> **Link do vídeo:** https://youtu.be/dEfyc4pequA?si=qfTYXjjeT2UMt9UV
 ---
 
 ## 📌 Visão Geral
 
-Este projeto consiste em um **Sistema Bancário Simplificado Distribuído**, desenvolvido como evolução das versões anteriores da disciplina. O sistema foi transformado em uma **API REST centralizada**, permitindo que múltiplos clientes independentes e poliglotas — construídos em diferentes linguagens e plataformas — se comuniquem e realizem operações concorrentes no mesmo núcleo bancário via requisições HTTP/JSON.
+Esta versão representa a **quarta evolução** do sistema bancário distribuído. A principal mudança arquitetural desta versão é a introdução de **comunicação indireta** via **RabbitMQ**, substituindo o processamento síncrono das operações financeiras por um modelo assíncrono baseado em filas de mensagens.
+
+As operações financeiras (depósito, saque, transferência e pagamento) deixaram de ser processadas diretamente pela API e passaram a ser delegadas a um serviço independente — o **payment-service** — por meio de filas persistentes no RabbitMQ.
 
 ```
   +-----------------------+      +-----------------------+
@@ -21,50 +22,100 @@ Este projeto consiste em um **Sistema Bancário Simplificado Distribuído**, des
                              |
                              v
                +---------------------------+
-               |     SERVIDOR CENTRAL      |
+               |         core-api          |
                |  (Go API REST - Gin Engine)|
+               +---------------------------+
+                             |
+                     publica na fila
+                             |
+                             v
+               +---------------------------+
+               |         RabbitMQ          |
+               |   (Message Broker)        |
+               +---------------------------+
+                             |
+                    consome da fila
+                             |
+                             v
+               +---------------------------+
+               |      payment-service      |
+               |  (Go - Consumer Worker)   |
+               +---------------------------+
+                             |
+                             v
+               +---------------------------+
+               |          SQLite           |
+               |   (Banco de Dados         |
+               |    Compartilhado)         |
                +---------------------------+
 ```
 
 ---
 
-## 🏗️ Arquitetura do Servidor (Go)
+## 🏗️ Arquitetura
 
-O servidor central foi desenvolvido em **Go**, utilizando o framework **Gin** para otimizar o roteamento, aplicação de middlewares e manipulação ágil de JSON. O projeto adota uma arquitetura rigorosamente dividida em camadas de responsabilidade:
+### Serviços
 
-```
-Cliente HTTP  ──>  Handler  ──>  Service  ──>  Repository  ──>  Banco (Em Memória)
-```
-
-| Camada | Responsabilidade |
+| Serviço | Responsabilidade |
 |---|---|
-| **Handler** | Isola a camada HTTP, recebe requisições, valida dados de entrada, converte DTOs e retorna respostas JSON padronizadas. |
-| **Service** | Centraliza todas as regras de negócio do domínio bancário (validações, depósitos, saques, pagamentos, transferências e cálculo de rendimentos). |
-| **Repository** | Encapsula, isola e abstrai o acesso aos dados da aplicação. |
-| **Banco** | Armazenamento em memória que gerencia as estruturas internas de Clientes e Contas, sem dependência de banco de dados externo. |
+| **core-api** | Recebe requisições HTTP, valida dados, publica eventos no RabbitMQ e responde imediatamente ao cliente |
+| **payment-service** | Consome mensagens das filas, processa as operações financeiras e atualiza os saldos no banco de dados |
+| **RabbitMQ** | Intermediário de mensagens — garante entrega, persistência e desacoplamento entre os serviços |
 
-### 🛡️ Tratamento de Concorrência Distribuída
+### Fluxo de uma Operação Financeira
 
-Como múltiplas operações podem ocorrer simultaneamente através de diferentes clientes disparando requisições, o servidor utiliza primitivas de sincronização via `sync.RWMutex` para proteger o acesso e a escrita nas contas. Isso evita **condições de corrida** (*race conditions*), como dois depósitos ou saques alterando o mesmo saldo ao mesmo tempo.
+```
+1. Cliente envia POST /contas/1001/depositar
+2. core-api valida a requisição
+3. core-api publica mensagem na fila "deposito"
+4. core-api responde 202 Accepted ao cliente imediatamente
+5. payment-service consome a mensagem da fila
+6. payment-service atualiza o saldo no SQLite
+```
+
+### Operações Síncronas (core-api processa diretamente)
+
+- Cadastro de cliente
+- Login
+- Consulta de conta
+- Extrato
+- Cálculo de rendimento
+
+### Operações Assíncronas (via RabbitMQ → payment-service)
+
+- Depósito
+- Saque
+- Transferência
+- Pagamento
+
+---
+
+## 🔑 Propriedades de Comunicação Indireta Demonstradas
+
+### Desacoplamento Espacial
+O `core-api` publica mensagens na fila sem conhecer o endereço ou identidade do `payment-service`. Os serviços se comunicam exclusivamente através do RabbitMQ.
+
+### Desacoplamento Temporal
+O `core-api` não precisa que o `payment-service` esteja online para publicar mensagens. As mensagens ficam persistidas nas filas até que o consumidor esteja disponível para processá-las.
+
+### Resiliência a Falhas
+Se o `payment-service` cair, as mensagens aguardam na fila. Quando o serviço retornar, todas as operações pendentes são processadas automaticamente — sem perda de dados.
 
 ---
 
 ## 🗂️ Modelagem de Domínio
 
-A estrutura interna do banco de dados em memória agrega o domínio em três entidades principais:
-
 ```
-Banco
- ├── Clientes
+Cliente
  └── Contas
       └── Histórico de Transações
 ```
 
 **Cliente** — Representa um usuário único no sistema.
-- `Nome`, `CPF` *(identificador único)*, `Senha`
+- `Nome`, `CPF` *(identificador único)*, `Senha` *(hash bcrypt)*
 
 **Conta** — Representa a conta bancária atrelada a um cliente.
-- `Número`, `Saldo`, `Titular`, `Tipo`, `Histórico de Transações`
+- `Número`, `Saldo`, `Titular`, `Tipo`
 
 **Transação** — Gerada a cada operação bancária.
 - `Tipo`, `Descrição`, `Valor`, `Data`
@@ -73,72 +124,138 @@ Banco
 
 ## 📋 Regras de Negócio
 
-### Restrições de Contas por Cliente
-
-- Um cliente pode possuir no máximo **1 Conta Corrente** e **1 Conta Poupança**.
-- É expressamente **proibido** que um cliente possua duas contas do mesmo tipo.
-- No momento do **login**, o cliente fornece CPF, Senha e o Tipo de Conta desejado para determinar qual ambiente será acessado.
-
-### Tipos de Conta e Suas Faixas
+### Tipos de Conta
 
 | Tipo | Numeração | Operações Exclusivas |
 |---|---|---|
-| **Conta Corrente** | A partir de `1000` | Pagamento |
-| **Conta Poupança** | A partir de `5000` | Rendimento |
+| **Conta Corrente** | A partir de `1001` | Pagamento |
+| **Conta Poupança** | A partir de `5001` | Rendimento |
 
-### Matriz de Operações Bancárias
+### Matriz de Operações
 
-| Operação | Descrição / Fluxo | Validações |
+| Operação | Processamento | Validações |
 |---|---|---|
-| **Depósito** | Adiciona saldo à conta e retorna o valor depositado e o saldo atualizado. | Apenas valores estritamente positivos. |
-| **Saque** | Retira dinheiro da conta logada. | Requer saldo disponível suficiente. |
-| **Transferência** | Envia recursos entre contas do ecossistema. | Valida existência da conta destino e saldo suficiente na origem. |
-| **Pagamento** | Quita boletos com descrição textual e valor. | Exclusiva para Conta Corrente. Requer saldo disponível. |
-| **Rendimento** | Projeta rendimentos futuros sob juros compostos. | Exclusiva para Conta Poupança. Taxa: **0,5% a.m.** (`0.005`). |
+| **Depósito** | Assíncrono | Valor positivo |
+| **Saque** | Assíncrono | Saldo suficiente |
+| **Transferência** | Assíncrono | Conta destino existe, saldo suficiente |
+| **Pagamento** | Assíncrono | Exclusivo Conta Corrente, saldo suficiente |
+| **Rendimento** | Síncrono | Exclusivo Conta Poupança. Taxa: **0,5% a.m.** |
 
 ---
 
-## 🌐 Ecossistema de Clientes (Poliglotismo)
+## 🔐 Autenticação JWT
 
-A arquitetura REST baseada em JSON permitiu o desenvolvimento de clientes em ecossistemas completamente distintos:
+O sistema utiliza **JSON Web Tokens (JWT)** para autenticação. Após o login, o cliente recebe um token com validade de **15 minutos** que deve ser enviado no header de todas as requisições às rotas protegidas:
+
+```
+Authorization: Bearer <token>
+```
+
+---
+
+## 🛠️ Stack Tecnológica
+
+| Tecnologia | Uso |
+|---|---|
+| **Go 1.26** | Linguagem principal |
+| **Gin** | Framework HTTP |
+| **RabbitMQ 3.13** | Message Broker |
+| **SQLite** | Banco de dados compartilhado |
+| **GORM** | ORM para acesso ao banco |
+| **JWT** | Autenticação |
+| **bcrypt** | Hash de senhas |
+| **Docker Compose** | Orquestração dos serviços |
+
+---
+
+## 📁 Estrutura do Projeto
+
+```
+/
+├── core-api/               # API principal (Go + Gin)
+│   ├── cmd/                # Ponto de entrada
+│   ├── internal/
+│   │   ├── auth/           # Chave JWT
+│   │   ├── db/             # Conexão com banco
+│   │   ├── dto/            # Objetos de transferência
+│   │   ├── handler/        # Handlers HTTP
+│   │   ├── middleware/     # JWT Middleware
+│   │   ├── model/          # (legado)
+│   │   ├── publisher/      # Publicador RabbitMQ
+│   │   ├── repository/     # Repositórios
+│   │   ├── routes/         # Configuração de rotas
+│   │   └── service/        # Regras de negócio
+│   └── Dockerfile
+├── payment-service/        # Serviço de pagamento (Go)
+│   ├── internal/
+│   │   └── processor/      # Processadores de transações
+│   ├── main.go
+│   └── Dockerfile
+├── shared/                 # Código compartilhado
+│   └── events.go           # Structs e constantes das filas
+├── client-java/            # Cliente Java (Spring Boot)
+├── client-python/          # Cliente Python (TUI)
+└── docker-compose.yml
+```
+
+---
+
+## 🚀 Como Executar
+
+### Pré-requisitos
+- Docker
+- Docker Compose
+
+### Subir todos os serviços
+
+```bash
+docker compose up --build
+```
+
+A API ficará disponível em `http://localhost:8080`.
+O RabbitMQ Management em `http://localhost:15672` (usuário: `guest`, senha: `guest`).
+
+### Limpar o ambiente
+
+```bash
+docker compose down -v
+```
+
+---
+
+## 🌐 Endpoints
+
+### Clientes
+| Método | Rota | Descrição | Auth |
+|---|---|---|---|
+| POST | `/clientes` | Cadastrar cliente | ❌ |
+| POST | `/clientes/login` | Login | ❌ |
+
+### Contas
+| Método | Rota | Descrição | Auth |
+|---|---|---|---|
+| GET | `/contas/:num/` | Consultar conta | ✅ |
+| POST | `/contas/:num/depositar` | Depositar | ✅ |
+| POST | `/contas/:num/sacar` | Sacar | ✅ |
+| POST | `/contas/:num/transferir` | Transferir | ✅ |
+| POST | `/contas/:num/pagamento` | Pagar | ✅ |
+| GET | `/contas/:num/extrato` | Extrato | ✅ |
+| GET | `/contas/:num/rendimento/:meses` | Calcular rendimento | ✅ |
+
+---
+
+## 🌐 Ecossistema de Clientes
 
 **Cliente Java** (Spring Boot)
 - Injeção de dependências
-- Tratamento rígido de tipos de dados
 - Interface via console CLI
-- Consumo de endpoints através de HTTP templates
 
 **Cliente Python 3**
-- Interface Textual de Usuário (TUI) rica
-- Controle reativo de sessão em memória local do runtime
-- Mapeamento dinâmico de chaves JSON: converte o padrão `CamelCase` nativo do Go para o `snake_case` esperado pelas boas práticas do Python
+- Interface Textual de Usuário (TUI)
+- Mapeamento dinâmico de chaves JSON
 
 ---
 
-## 🎓 Conclusões e Aprendizados
+## 🎓 Conclusões
 
-A terceira evolução do sistema (V3) consolidou os benefícios práticos do **desacoplamento arquitetural**. Ao isolar o estado do banco de dados e as travas de concorrência exclusivamente no servidor Go, eliminou-se a necessidade de lógica pesada nos terminais dos clientes.
-
-Contanto que o **contrato da API REST** e a integridade dos payloads JSON sejam estritamente respeitados, diferentes linguagens de programação com paradigmas e tempos de execução opostos conseguem interoperar de forma **transparente, estável e segura** sobre a rede.
-
-# Rodando o Servidor com Docker
-
-## Build da imagem
-
-```bash
-docker build -t banco-api .
-```
-
----
-
-## Executar o container
-
-```bash
-docker run -p 8080:8080 banco-api
-```
-
-A API ficará disponível em:
-
-```text
-http://localhost:8080
-```
+A quarta evolução do sistema introduziu comunicação indireta via filas de mensagens, demonstrando na prática os conceitos de **desacoplamento espacial e temporal** estudados na disciplina de Sistemas Distribuídos. A adoção do RabbitMQ como intermediário permitiu que o `core-api` respondesse imediatamente ao cliente sem aguardar o processamento das operações financeiras, aumentando a resiliência e a escalabilidade do sistema.
