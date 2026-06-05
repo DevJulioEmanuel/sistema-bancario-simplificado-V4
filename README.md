@@ -1,7 +1,9 @@
 # 🏦 Sistema Bancário Simplificado e Distribuído — V4
 
 > **Disciplina:** Sistemas Distribuídos — UFC Quixadá
+
 > **Autores:** Arthur Lelis Uchoa e Julio Emanuel Pereira da Silva
+
 > **Arquitetura:** Microserviços com Comunicação Indireta via Filas de Mensagens
 
 ---
