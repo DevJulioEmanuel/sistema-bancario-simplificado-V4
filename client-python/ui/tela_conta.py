@@ -1,10 +1,45 @@
 import time
 import sessao
+import websocket
+import threading
+import json
 from models import ValorRequest, TransferenciaRequest, PagamentoRequest, RendimentoRequest
 from ui.banner import Banner
 
+
+def escutar_atualizacoes_servidor(numero_conta):
+    try:
+        url_ws = f"ws://localhost:8080/ws/{numero_conta}"
+        ws = websocket.create_connection(url_ws)
+
+        while True:
+            resposta = ws.recv()
+            dados = json.loads(resposta)
+
+            if dados.get("evento") == "saldo_atualizado":
+                novo_saldo = dados.get("novo_saldo")
+                sessao.usuario_atual.saldo = novo_saldo
+
+                if not getattr(sessao, "bloquear_atualizacao", False):
+                    _renderizar_dashboard()
+                    _exibir_menu()
+                    Banner.espaco()
+                    Banner.prompt("O que deseja fazer?")
+
+    except Exception:
+        pass
+
 def exibir_tela_conta(api_client):
     logado = True
+
+    sessao.bloquear_atualizacao = False
+
+    t = threading.Thread(
+        target=escutar_atualizacoes_servidor,
+        args=(sessao.usuario_atual.numero,),
+        daemon=True
+    )
+    t.start()
 
     while logado:
         _renderizar_dashboard()
@@ -27,6 +62,8 @@ def exibir_tela_conta(api_client):
                 _operacao_projetar_rendimento(api_client)
             else:
                 _opcao_invalida()
+        elif opcao == "6":
+            _operacao_notificacoes(api_client)
         elif opcao == "0":
             Banner.limpar()
             Banner.exibir_cabecalho()
@@ -80,6 +117,8 @@ def _exibir_menu():
     else:
         print(f"{m}  {Banner.cinza('[5]  Projetar Rendimento')}")
 
+    print(f"{m}  {Banner.cinza('[6]  Ver notificações')}")
+
     print(f"{m}  {Banner.cinza('[0]  Sair (Logout)')}")
     Banner.espaco()
     Banner.prompt("O que deseja fazer?")
@@ -89,32 +128,34 @@ def _operacao_depositar(api_client):
     valor = _ler_valor("Valor do depósito")
     if valor is None: return
 
+    sessao.bloquear_atualizacao = True
     Banner.info("Processando...")
     try:
         valor_deposito = ValorRequest(valor)
         api_client.depositar(sessao.usuario_atual.numero, valor_deposito)
-        sessao.usuario_atual.saldo += valor
-        Banner.sucesso("Depósito realizado com sucesso!")
+        Banner.sucesso("Depósito em processamento!")
     except Exception as e:
         Banner.erro(f"Erro ao depositar: {e}")
         _pausa(2000)
     _pausa(2000)
+    sessao.bloquear_atualizacao = False
 
 
 def _operacao_sacar(api_client):
     valor = _ler_valor("Valor do saque")
     if valor is None: return
 
+    sessao.bloquear_atualizacao = True
     Banner.info("Processando...")
     try:
         valor_saque = ValorRequest(valor)
         api_client.sacar(sessao.usuario_atual.numero, valor_saque)
-        sessao.usuario_atual.saldo -= valor
-        Banner.sucesso("Saque realizado com sucesso!")
+        Banner.sucesso("Saque em processamento!")
     except Exception as e:
         Banner.erro(f"Erro ao sacar: {e}")
         _pausa(2000)
     _pausa(2000)
+    sessao.bloquear_atualizacao = False
 
 
 def _operacao_transferir(api_client):
@@ -138,16 +179,17 @@ def _operacao_transferir(api_client):
     valor = _ler_valor("Valor da transferência")
     if valor is None: return
 
+    sessao.bloquear_atualizacao = True
     Banner.info("Processando...")
     try:
         valor_transferencia = TransferenciaRequest(num_destino, valor)
         api_client.transferir(sessao.usuario_atual.numero, valor_transferencia)
-        sessao.usuario_atual.saldo -= valor
-        Banner.sucesso("Transferência realizada com sucesso!")
+        Banner.sucesso("Transferência em processamento!")
     except Exception as e:
         Banner.erro(f"Erro ao transferir: {e}")
         _pausa(2000)
     _pausa(2500)
+    sessao.bloquear_atualizacao = False
 
 
 def _operacao_pagar(api_client):
@@ -164,17 +206,18 @@ def _operacao_pagar(api_client):
     valor = _ler_valor("Valor do pagamento")
     if valor is None: return
 
+    sessao.bloquear_atualizacao = True
     Banner.info("Processando...")
     try:
         valor_pagamento = PagamentoRequest(descricao, valor)
         api_client.pagar(sessao.usuario_atual.numero, valor_pagamento)
 
-        sessao.usuario_atual.saldo -= valor
-        Banner.sucesso(f"Pagamento efetuado com sucesso! — {descricao}")
+        Banner.sucesso(f"Pagamento em processamento! — {descricao}")
     except Exception as e:
         Banner.erro(f"Erro ao pagar: {e}")
         _pausa(2000)
     _pausa(2000)
+    sessao.bloquear_atualizacao = False
 
 
 def _operacao_projetar_rendimento(api_client):
@@ -236,6 +279,40 @@ def _operacao_extrato(api_client):
     except Exception as e:
         Banner.erro(f"Erro ao buscar extrato: {e}")
         _pausa(2000)
+
+    Banner.espaco()
+    Banner.linha_separadora()
+    Banner.espaco()
+    Banner.aguarde_enter()
+
+def _operacao_notificacoes(api_client):
+    numero_conta = sessao.usuario_atual.numero
+
+    Banner.limpar()
+    Banner.exibir_cabecalho("NOTIFICAÇÕES")
+    Banner.titulo_secao(f"CAIXA DE ENTRADA")
+
+    Banner.info("Buscando notificações no servidor...")
+
+    try:
+        notificacoes = api_client.obter_notificacoes(numero_conta)
+
+        if not notificacoes:
+            Banner.info("Sua caixa de notificações está vazia.")
+        else:
+            Banner.label_secao("ALERTAS RECEBIDOS")
+
+            for notif in notificacoes:
+                msg = notif.get("mensagem", "Sem mensagem")
+                sucesso = notif.get("sucesso", False)
+
+                if sucesso:
+                    print(f"{Banner.margem()}  \033[92m• [SUCESSO] {msg}\033[0m")
+                else:
+                    print(f"{Banner.margem()}  \033[91m• [FALHA] {msg}\033[0m")
+
+    except Exception as e:
+        Banner.erro(f"Erro ao recuperar notificações: {e}")
 
     Banner.espaco()
     Banner.linha_separadora()

@@ -7,6 +7,7 @@ import com.example.client_java.model.request.TransferenciaRequest;
 import com.example.client_java.model.request.ValorRequest;
 import com.example.client_java.model.response.*;
 import com.example.client_java.service.BancoApiClient;
+import com.example.client_java.service.WebSocketService;
 import org.springframework.web.client.HttpClientErrorException;
 
 import java.text.DecimalFormat;
@@ -17,15 +18,31 @@ public class TelaConta {
     private final Scanner sc;
     private final BancoApiClient bancoApiClient;
     private final ContaLogada contaLogada;
+    private final WebSocketService webSocketService;
 
-    public TelaConta(Scanner sc, BancoApiClient bancoApiClient, ContaLogada contaLogada) {
+    private boolean bloquearAtualizacao = false;
+
+    public TelaConta(Scanner sc, BancoApiClient bancoApiClient, ContaLogada contaLogada, WebSocketService webSocketService) {
         this.sc = sc;
         this.bancoApiClient = bancoApiClient;
         this.contaLogada = contaLogada;
+        this.webSocketService = webSocketService;
     }
 
     public void exibir() {
         boolean logado = true;
+
+        webSocketService.conectar(contaLogada.getNumeroConta(), () -> {
+            try {
+                if (!bloquearAtualizacao) {
+                    ContaResponse dadosNovos = bancoApiClient.obterDados(contaLogada.getNumeroConta());
+                    contaLogada.setSaldo(dadosNovos.saldo());
+                    renderizarDashboard();
+                    exibirMenu();
+                }
+            } catch (Exception e) {
+            }
+        });
 
         while (logado) {
             renderizarDashboard();
@@ -43,10 +60,7 @@ public class TelaConta {
                     else if (contaLogada.isPoupanca()) operacaoProjetarRendimento();
                     else opcaoInvalida();
                 }
-                case "6" -> {
-                    if (contaLogada.isPoupanca()) operacaoProjetarRendimento();
-                    else opcaoInvalida();
-                }
+                case "6" -> operacaoNotificacoes();
                 case "0" -> {
                     Banner.limpar();
                     Banner.exibirCabecalho();
@@ -99,12 +113,16 @@ public class TelaConta {
             System.out.println(m + "  " + Banner.cinza("[5]  Projetar Rendimento"));
         }
 
+        System.out.println(m + "  " + Banner.cinza("[6]  Ver Notificações"));
+
         System.out.println(m + "  " + Banner.cinza("[0]  Sair (Logout)"));
         Banner.espaco();
         Banner.prompt("O que deseja fazer?");
     }
 
     private void operacaoDepositar() {
+        bloquearAtualizacao = true;
+
         Double valor = lerValor("Valor do depósito");
         if (valor == null) return;
 
@@ -112,7 +130,6 @@ public class TelaConta {
         try {
             ValorRequest valorRequest = new ValorRequest(valor);
             MovimentacaoResponse res = bancoApiClient.depositar(contaLogada.getNumeroConta(), valorRequest);
-            contaLogada.setSaldo(contaLogada.getSaldo() + valor);
             Banner.sucesso(res.mensagem());
         } catch (HttpClientErrorException e) {
             String erro = e.getResponseBodyAsString();
@@ -125,9 +142,13 @@ public class TelaConta {
             pausa(2000);
         }
         pausa(2000);
+
+        bloquearAtualizacao = false;
     }
 
     private void operacaoSacar() {
+        bloquearAtualizacao = true;
+
         Double valor = lerValor("Valor do saque");
         if (valor == null) return;
 
@@ -135,7 +156,6 @@ public class TelaConta {
         try {
             ValorRequest valorRequest = new ValorRequest(valor);
             MovimentacaoResponse res = bancoApiClient.sacar(contaLogada.getNumeroConta(), valorRequest);
-            contaLogada.setSaldo(contaLogada.getSaldo() - valor);
             Banner.sucesso(res.mensagem());
         } catch (HttpClientErrorException e) {
             String erro = e.getResponseBodyAsString();
@@ -148,9 +168,13 @@ public class TelaConta {
             pausa(2000);
         }
         pausa(2000);
+
+        bloquearAtualizacao = false;
     }
 
     private void operacaoTransferir() {
+        bloquearAtualizacao = true;
+
         Banner.espaco();
         Banner.labelSecao("TRANSFERÊNCIA");
 
@@ -178,7 +202,6 @@ public class TelaConta {
         try {
             TransferenciaRequest transferenciaRequest = new TransferenciaRequest(numDestino, valor);
             TransferenciaResponse res = bancoApiClient.transferir(contaLogada.getNumeroConta(), transferenciaRequest);
-            contaLogada.setSaldo(contaLogada.getSaldo() - valor);
             Banner.sucesso(res.mensagem());
         } catch (HttpClientErrorException e) {
             String erro = e.getResponseBodyAsString();
@@ -191,9 +214,13 @@ public class TelaConta {
             pausa(2000);
         }
         pausa(2500);
+
+        bloquearAtualizacao = false;
     }
 
     private void operacaoPagar() {
+        bloquearAtualizacao = true;
+
         Banner.espaco();
         Banner.labelSecao("PAGAMENTO DE BOLETO / CONTA");
 
@@ -212,7 +239,6 @@ public class TelaConta {
         try {
             PagamentoRequest pagamentoRequest = new PagamentoRequest(descricao, valor);
             PagamentoResponse res = bancoApiClient.pagar(contaLogada.getNumeroConta(), pagamentoRequest);
-            contaLogada.setSaldo(contaLogada.getSaldo() - valor);
             Banner.sucesso(res.mensagem() + " — " + descricao);
         } catch (HttpClientErrorException e) {
             String erro = e.getResponseBodyAsString();
@@ -225,6 +251,8 @@ public class TelaConta {
             pausa(2000);
         }
         pausa(2000);
+
+        bloquearAtualizacao = false;
     }
 
     private void operacaoProjetarRendimento() {
@@ -308,6 +336,43 @@ public class TelaConta {
             pausa(1500);
             return null;
         }
+    }
+
+    private void operacaoNotificacoes() {
+        Banner.limpar();
+        Banner.exibirCabecalho("NOTIFICAÇÕES");
+        Banner.tituloSecao("CAIXA DE ENTRADA");
+
+        Banner.info("Buscando notificações no servidor...");
+
+        try {
+            java.util.List<java.util.Map<String, Object>> notificacoes = bancoApiClient.obterNotificacoes(contaLogada.getNumeroConta());
+
+            Banner.espaco();
+            if (notificacoes == null || notificacoes.isEmpty()) {
+                Banner.info("Sua caixa de notificações está vazia.");
+            } else {
+                Banner.labelSecao("ALERTAS RECEBIDOS");
+
+                for (java.util.Map<String, Object> notif : notificacoes) {
+                    String msg = (String) notif.getOrDefault("mensagem", "Sem mensagem");
+                    boolean sucesso = (boolean) notif.getOrDefault("sucesso", false);
+
+                    if (sucesso) {
+                        System.out.println(Banner.margem() + "  \u001B[92m• [SUCESSO] " + msg + "\u001B[0m");
+                    } else {
+                        System.out.println(Banner.margem() + "  \u001B[91m• [FALHA] " + msg + "\u001B[0m");
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Banner.erro("Erro ao recuperar notificações: " + e.getMessage());
+        }
+
+        Banner.espaco();
+        Banner.linhaSeparadora();
+        Banner.espaco();
+        Banner.aguardeEnter(sc);
     }
 
     private void opcaoInvalida() {

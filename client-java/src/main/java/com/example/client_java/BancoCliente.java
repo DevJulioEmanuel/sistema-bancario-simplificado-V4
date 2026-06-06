@@ -29,9 +29,9 @@ public class BancoCliente implements CommandLineRunner {
 	public static void main(String[] args) {
 		SpringApplication app = new SpringApplication(BancoCliente.class);
 
-		app.setBannerMode(org.springframework.boot.Banner.Mode.OFF);
+		app.setBannerMode(org.springframework.boot.Banner.Mode.CONSOLE);
 
-		app.setLogStartupInfo(false);
+		app.setLogStartupInfo(true);
 
 		app.run(args);
 	}

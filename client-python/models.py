@@ -59,22 +59,15 @@ class LoginResponse:
     mensagem: str
     nome: str
     numero: int
+    token: str
 
 @dataclass
 class MovimentacaoResponse:
     mensagem: str
-    numeroConta: int
-    tipoOperacao: int
-    valorMovimentado: float
-    saldoAtual: float
 
 @dataclass
 class PagamentoResponse:
     mensagem: str
-    numeroConta: int
-    descricao: str
-    valorPago: float
-    saldoAtual: float
 
 @dataclass
 class RendimentoResponse:
@@ -95,10 +88,6 @@ class TransacaoResponse:
 @dataclass
 class TransferenciaResponse:
     mensagem: str
-    contaOrigem: int
-    contaDestino: int
-    valorTransferido: float
-    saldoAtualOrigem: float
 
 @dataclass
 class ContaLogada:

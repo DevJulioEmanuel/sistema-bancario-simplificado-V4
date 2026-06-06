@@ -1,12 +1,12 @@
 spring:
   application:
     name: client-java
-  main:
-    log-startup-info: false
+#  main:
+#    log-startup-info: false
 
 server:
   port: 8081
 
-logging:
-  level:
-    root: OFF
+#logging:
+#  level:
+#    root: OFF

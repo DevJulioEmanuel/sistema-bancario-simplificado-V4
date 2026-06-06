@@ -28,7 +28,7 @@ func (h *NotificacaoHandler) GetNotificacoes(c *gin.Context) {
 	var notificacoes []model.Notificacao
 
 	result := h.db.Where("conta_num = ?", contaNum).
-		Order("created_at desc").
+		Order("id asc").
 		Limit(20).
 		Find(&notificacoes)
 

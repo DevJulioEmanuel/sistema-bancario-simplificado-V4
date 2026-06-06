@@ -70,3 +70,7 @@ class BancoApiClient:
     def rendimento(self, numero: int, req: RendimentoRequest) -> RendimentoResponse:
         response = self._enviar("GET", f"/contas/{numero}/rendimento/{req.meses}")
         return RendimentoResponse(**response)
+
+    def obter_notificacoes(self, numero: int) -> list:
+        response = self._enviar("GET", f"/contas/{numero}/notificacoes")
+        return response

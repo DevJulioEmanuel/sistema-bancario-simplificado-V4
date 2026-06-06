@@ -3,8 +3,12 @@ package com.example.client_java.service;
 import com.example.client_java.model.request.*;
 import com.example.client_java.model.response.*;
 import com.example.client_java.session.UserSession;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
+
+import java.util.List;
+import java.util.Map;
 
 @Service
 public class BancoApiClient {
@@ -98,6 +102,14 @@ public class BancoApiClient {
                 .header("Authorization", "Bearer " + userSession.getToken())
                 .retrieve()
                 .body(RendimentoResponse.class);
+    }
+
+    public List<Map<String, Object>> obterNotificacoes(int numero) {
+        return restClient.get()
+                .uri("/contas/" + numero + "/notificacoes")
+                .header("Authorization", "Bearer " + userSession.getToken())
+                .retrieve()
+                .body(new ParameterizedTypeReference<List<Map<String, Object>>>() {});
     }
 
 }
