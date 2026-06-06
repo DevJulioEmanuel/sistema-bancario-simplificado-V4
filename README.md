@@ -225,12 +225,12 @@ docker compose down -v
 
 ### Rodar o cliente python
 
-## Windows
+### Linux
 ```bash
 cd client-python && python -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python main.py
 ```
 
-## Linux
+### Windows
 ```bash
 cd client-python; python -m venv venv; .\venv\Scripts\Activate.ps1; pip install -r requirements.txt; python main.py
 ```
