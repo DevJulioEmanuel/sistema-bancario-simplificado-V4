@@ -4,52 +4,52 @@
 
 > **Autores:** Arthur Lelis Uchoa e Julio Emanuel Pereira da Silva
 
-> **Arquitetura:** Microserviços com Comunicação Indireta via Filas de Mensagens
+> **Arquitetura:** Comunicação Indireta via Filas de Mensagens (RabbitMQ)
 
 ---
 
 ## 📌 Visão Geral
 
-Esta versão representa a **quarta evolução** do sistema bancário distribuído. A principal mudança arquitetural desta versão é a introdução de **comunicação indireta** via **RabbitMQ**, substituindo o processamento síncrono das operações financeiras por um modelo assíncrono baseado em filas de mensagens.
+Esta versão representa a **quarta evolução** do sistema bancário distribuído. A principal mudança arquitetural é a introdução de **comunicação indireta** via **RabbitMQ**, substituindo o processamento síncrono das operações financeiras por um modelo assíncrono baseado em filas de mensagens persistentes.
 
-As operações financeiras (depósito, saque, transferência e pagamento) deixaram de ser processadas diretamente pela API e passaram a ser delegadas a um serviço independente — o **payment-service** — por meio de filas persistentes no RabbitMQ.
+As operações financeiras (depósito, saque, transferência e pagamento) deixaram de ser processadas diretamente pela API e passaram a ser delegadas a um serviço independente — o **payment-service** — que se comunica com a **core-api** exclusivamente via filas, sem nenhum acoplamento direto entre os dois.
 
 ```
-  +-----------------------+      +-----------------------+
-  |      Cliente Java     |      |     Cliente Python    |
-  |  (Spring Boot / CLI)  |      |   (Python 3 / TUI)    |
-  +-----------------------+      +-----------------------+
-              \                              /
-               \--- HTTP / JSON (Port 8080) /
-                             |
-                             v
-               +---------------------------+
-               |         core-api          |
-               |  (Go API REST - Gin Engine)|
-               +---------------------------+
-                             |
-                     publica na fila
-                             |
-                             v
-               +---------------------------+
-               |         RabbitMQ          |
-               |   (Message Broker)        |
-               +---------------------------+
-                             |
-                    consome da fila
-                             |
-                             v
-               +---------------------------+
-               |      payment-service      |
-               |  (Go - Consumer Worker)   |
-               +---------------------------+
-                             |
-                             v
-               +---------------------------+
-               |          SQLite           |
-               |   (Banco de Dados         |
-               |    Compartilhado)         |
-               +---------------------------+
+  +-----------+      +-----------+
+  |   Cliente |      |   Cliente |
+  |    Java   |      |   Python  |
+  +-----------+      +-----------+
+         \                /
+          \-- HTTP/JSON --/
+                  |
+                  v
+     +------------------------+
+     |        core-api        |
+     |    (Go + Gin + JWT)    |
+     +------------------------+
+          |            ^
+    publica na     consome de
+       fila      fila de retorno
+          |            |
+          v            |
+     +------------------------+
+     |        RabbitMQ        |
+     |   (Message Broker)     |
+     +------------------------+
+          |            ^
+    consome da     publica
+       fila       resultado
+          |            |
+          v            |
+     +------------------------+
+     |    payment-service     |
+     |    (Go Consumer)       |
+     +------------------------+
+                  |
+                  v
+     +------------------------+
+     |         SQLite         |
+     +------------------------+
 ```
 
 ---
@@ -60,8 +60,8 @@ As operações financeiras (depósito, saque, transferência e pagamento) deixar
 
 | Serviço | Responsabilidade |
 |---|---|
-| **core-api** | Recebe requisições HTTP, valida dados, publica eventos no RabbitMQ e responde imediatamente ao cliente |
-| **payment-service** | Consome mensagens das filas, processa as operações financeiras e atualiza os saldos no banco de dados |
+| **core-api** | Recebe requisições HTTP, valida dados, publica operações na fila e responde imediatamente ao cliente |
+| **payment-service** | Consome mensagens das filas, processa as operações financeiras, atualiza saldos e publica o resultado de volta |
 | **RabbitMQ** | Intermediário de mensagens — garante entrega, persistência e desacoplamento entre os serviços |
 
 ### Fluxo de uma Operação Financeira
@@ -72,7 +72,9 @@ As operações financeiras (depósito, saque, transferência e pagamento) deixar
 3. core-api publica mensagem na fila "deposito"
 4. core-api responde 202 Accepted ao cliente imediatamente
 5. payment-service consome a mensagem da fila
-6. payment-service atualiza o saldo no SQLite
+6. payment-service processa e atualiza o saldo no banco
+7. payment-service publica resultado na fila "notificacoes"
+8. core-api consome a notificação e a disponibiliza ao cliente
 ```
 
 ### Operações Síncronas (core-api processa diretamente)
@@ -82,6 +84,7 @@ As operações financeiras (depósito, saque, transferência e pagamento) deixar
 - Consulta de conta
 - Extrato
 - Cálculo de rendimento
+- Consulta de notificações
 
 ### Operações Assíncronas (via RabbitMQ → payment-service)
 
@@ -92,26 +95,92 @@ As operações financeiras (depósito, saque, transferência e pagamento) deixar
 
 ---
 
+## 🔔 Sistema de Notificações
+
+Uma das decisões arquiteturais desta versão foi implementar um **canal de feedback assíncrono** entre o `payment-service` e o `core-api`.
+
+O problema: como o cliente recebe `202 Accepted` imediatamente, ele não sabe se a operação foi bem-sucedida ou falhou (por exemplo, por saldo insuficiente).
+
+A solução adotada foi um **fluxo de eventos de resposta**:
+
+```
+payment-service processa → publica resultado na fila "notificacoes"
+                                          ↓
+                              core-api consome e armazena
+                                          ↓
+                              cliente consulta GET /notificacoes
+```
+
+Cada notificação contém:
+- Tipo da operação (depósito, saque, transferência, pagamento)
+- Status (sucesso ou falha)
+- Motivo da falha quando aplicável (ex: saldo insuficiente)
+- Data e hora do processamento
+
+Isso mantém o desacoplamento temporal — o payment-service não precisa conhecer o cliente, apenas publica o resultado na fila.
+
+---
+
 ## 🔑 Propriedades de Comunicação Indireta Demonstradas
 
 ### Desacoplamento Espacial
-O `core-api` publica mensagens na fila sem conhecer o endereço ou identidade do `payment-service`. Os serviços se comunicam exclusivamente através do RabbitMQ.
+O `core-api` publica mensagens na fila sem conhecer o endereço, porta ou identidade do `payment-service`. Os dois serviços se comunicam exclusivamente através do RabbitMQ, sem nenhuma referência direta um ao outro.
 
 ### Desacoplamento Temporal
-O `core-api` não precisa que o `payment-service` esteja online para publicar mensagens. As mensagens ficam persistidas nas filas até que o consumidor esteja disponível para processá-las.
+O `core-api` não precisa que o `payment-service` esteja online para publicar mensagens. As mensagens ficam persistidas nas filas até que o consumidor esteja disponível para processá-las — podendo ser minutos, horas ou dias depois.
 
 ### Resiliência a Falhas
-Se o `payment-service` cair, as mensagens aguardam na fila. Quando o serviço retornar, todas as operações pendentes são processadas automaticamente — sem perda de dados.
+Se o `payment-service` cair, as mensagens aguardam na fila. Quando o serviço retornar, todas as operações pendentes são processadas automaticamente — sem perda de dados, sem intervenção manual.
+
+---
+
+## 📄 Relatório Técnico
+
+### Justificativa da Escolha — Filas de Mensagens (Opção C)
+
+O sistema bancário simplificado já possuía uma API REST funcional com operações financeiras processadas de forma síncrona. O principal problema dessa arquitetura era o **acoplamento temporal**: a API ficava bloqueada aguardando o processamento de cada operação antes de responder ao cliente, e qualquer falha no processamento propagava erro diretamente para o usuário.
+
+As **Filas de Mensagens** foram a abordagem escolhida por três razões centrais:
+
+**1. Adequação ao domínio bancário.** Operações financeiras como depósitos, saques e transferências não precisam de resposta imediata sobre o resultado — o cliente precisa apenas saber que a operação foi *recebida*. Bancos reais funcionam assim: um Pix entra em "processando" antes de ser confirmado.
+
+**2. Resiliência natural.** Com filas persistentes e duráveis, uma falha no `payment-service` não perde nenhuma operação — as mensagens aguardam na fila e são processadas quando o serviço retorna. Isso seria impossível com comunicação direta.
+
+**3. Desacoplamento completo.** A `core-api` e o `payment-service` não se conhecem — comunicam-se exclusivamente pelo contrato das mensagens. Isso permite evoluir, substituir ou escalar cada serviço independentemente.
+
+As opções Pub-Sub e Multicast foram descartadas porque o cenário bancário exige entrega garantida para *um* processador específico, não disseminação para múltiplos receptores. O modelo de fila ponto a ponto se alinha melhor com operações financeiras que devem ser processadas exatamente uma vez.
+
+---
+
+### Análise de Overhead e Complexidade
+
+A introdução do RabbitMQ como intermediário trouxe ganhos arquiteturais significativos, mas também custos que precisam ser reconhecidos.
+
+**Overhead de desempenho introduzido:**
+
+- Cada operação financeira agora envolve serialização JSON, publicação na fila, persistência em disco pelo broker e deserialização pelo consumidor. O que antes era uma chamada de função direta passou a ter latência adicional de rede e I/O.
+- O cliente não recebe o resultado imediato da operação — precisa consultar as notificações em um segundo momento (padrão *polling*).
+- A conexão com o RabbitMQ adiciona um ponto de falha de infraestrutura: se o broker cair, nenhuma operação financeira pode ser publicada.
+
+**Como o overhead afetou o sistema:**
+
+Na prática, a latência adicional foi imperceptível para o usuário — a `core-api` responde `202 Accepted` em menos de 1ms, enquanto o processamento pelo `payment-service` ocorre em paralelo em poucos milissegundos. O modelo assíncrono transformou uma operação bloqueante em não-bloqueante, melhorando a percepção de desempenho do cliente.
+
+**Estratégias de mitigação:**
+
+| Problema | Mitigação Adotada |
+|---|---|
+| Falha do broker | Retry automático na inicialização dos serviços |
+| Perda de mensagens | Filas `durable: true` + mensagens `Persistent` |
+| Processamento duplicado | ACK manual — mensagem só é removida após confirmação |
+| Erros de negócio em loop | NACK sem requeue para erros permanentes (saldo insuficiente) |
+| Latência de feedback | Sistema de notificações via fila de retorno |
+
+Em produção, o overhead do broker seria mitigado com um **cluster RabbitMQ** com replicação de filas, eliminando o ponto único de falha. Para escala horizontal, múltiplas instâncias do `payment-service` poderiam consumir a mesma fila em paralelo, distribuindo a carga automaticamente — algo impossível na arquitetura síncrona original.
 
 ---
 
 ## 🗂️ Modelagem de Domínio
-
-```
-Cliente
- └── Contas
-      └── Histórico de Transações
-```
 
 **Cliente** — Representa um usuário único no sistema.
 - `Nome`, `CPF` *(identificador único)*, `Senha` *(hash bcrypt)*
@@ -121,6 +190,9 @@ Cliente
 
 **Transação** — Gerada a cada operação bancária.
 - `Tipo`, `Descrição`, `Valor`, `Data`
+
+**Notificação** — Resultado do processamento assíncrono.
+- `Tipo`, `Status`, `Motivo`, `Data`
 
 ---
 
@@ -141,7 +213,7 @@ Cliente
 | **Saque** | Assíncrono | Saldo suficiente |
 | **Transferência** | Assíncrono | Conta destino existe, saldo suficiente |
 | **Pagamento** | Assíncrono | Exclusivo Conta Corrente, saldo suficiente |
-| **Rendimento** | Síncrono | Exclusivo Conta Poupança. Taxa: **0,5% a.m.** |
+| **Rendimento** | Síncrono | Exclusivo Conta Poupança. Taxa: 0,5% a.m. |
 
 ---
 
@@ -162,7 +234,7 @@ Authorization: Bearer <token>
 | **Go 1.26** | Linguagem principal |
 | **Gin** | Framework HTTP |
 | **RabbitMQ 3.13** | Message Broker |
-| **SQLite** | Banco de dados compartilhado |
+| **SQLite** | Banco de dados |
 | **GORM** | ORM para acesso ao banco |
 | **JWT** | Autenticação |
 | **bcrypt** | Hash de senhas |
@@ -182,7 +254,6 @@ Authorization: Bearer <token>
 │   │   ├── dto/            # Objetos de transferência
 │   │   ├── handler/        # Handlers HTTP
 │   │   ├── middleware/     # JWT Middleware
-│   │   ├── model/          # (legado)
 │   │   ├── publisher/      # Publicador RabbitMQ
 │   │   ├── repository/     # Repositórios
 │   │   ├── routes/         # Configuração de rotas
@@ -217,22 +288,26 @@ docker compose up --build
 A API ficará disponível em `http://localhost:8080`.
 O RabbitMQ Management em `http://localhost:15672` (usuário: `guest`, senha: `guest`).
 
+### Demonstração de resiliência
+
+```bash
+# Derrubar o payment-service
+docker compose stop payment-service
+
+# Fazer operações — mensagens ficam na fila
+# Verificar em http://localhost:15672 → Queues
+
+# Subir novamente — processa tudo automaticamente
+docker compose start payment-service
+
+# Acompanhar logs em tempo real
+docker compose logs -f payment-service
+```
+
 ### Limpar o ambiente
 
 ```bash
 docker compose down -v
-```
-
-### Rodar o cliente python
-
-### Linux
-```bash
-cd client-python && python -m venv venv && source venv/bin/activate && pip install -r requirements.txt && python main.py
-```
-
-### Windows
-```bash
-cd client-python; python -m venv venv; .\venv\Scripts\Activate.ps1; pip install -r requirements.txt; python main.py
 ```
 
 ---
@@ -255,6 +330,7 @@ cd client-python; python -m venv venv; .\venv\Scripts\Activate.ps1; pip install 
 | POST | `/contas/:num/pagamento` | Pagar | ✅ |
 | GET | `/contas/:num/extrato` | Extrato | ✅ |
 | GET | `/contas/:num/rendimento/:meses` | Calcular rendimento | ✅ |
+| GET | `/contas/:num/notificacoes` | Consultar notificações | ✅ |
 
 ---
 
@@ -267,9 +343,3 @@ cd client-python; python -m venv venv; .\venv\Scripts\Activate.ps1; pip install 
 **Cliente Python 3**
 - Interface Textual de Usuário (TUI)
 - Mapeamento dinâmico de chaves JSON
-
----
-
-## 🎓 Conclusões
-
-A quarta evolução do sistema introduziu comunicação indireta via filas de mensagens, demonstrando na prática os conceitos de **desacoplamento espacial e temporal** estudados na disciplina de Sistemas Distribuídos. A adoção do RabbitMQ como intermediário permitiu que o `core-api` respondesse imediatamente ao cliente sem aguardar o processamento das operações financeiras, aumentando a resiliência e a escalabilidade do sistema.
