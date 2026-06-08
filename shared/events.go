@@ -1,11 +1,8 @@
 package shared
 
 const (
-	FilaNotificacao   = "notificacao"
-	FilaDeposito      = "deposito"
-	FilaSaque         = "saque"
-	FilaTransferencia = "transferencia"
-	FilaPagamento     = "pagamento"
+	FilaNotificacao = "notificacao"
+	FilaTransacoes  = "transacoes_conta"
 )
 
 type TransacaoEvent struct {

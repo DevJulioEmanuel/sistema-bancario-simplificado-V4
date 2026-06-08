@@ -23,26 +23,16 @@ func NewPublisher(url string) (*Publisher, error) {
 		return nil, err
 	}
 
-	filas := []string{
-		shared.FilaDeposito,
-		shared.FilaSaque,
-		shared.FilaTransferencia,
-		shared.FilaPagamento,
-	}
-
-	for _, fila := range filas {
-		_, err = canal.QueueDeclare(fila, true, false, false, false, nil)
-		if err != nil {
-			return nil, err
-		}
+	_, err = canal.QueueDeclare(shared.FilaTransacoes, true, false, false, false, nil)
+	if err != nil {
+		return nil, err
 	}
 
 	return &Publisher{canal: canal}, nil
 }
 
-func (p *Publisher) Publish(ctx context.Context, queueName string, transacao shared.TransacaoEvent) error {
+func (p *Publisher) Publish(ctx context.Context, transacao shared.TransacaoEvent) error {
 	body, err := json.Marshal(transacao)
-
 	if err != nil {
 		return err
 	}
@@ -50,7 +40,7 @@ func (p *Publisher) Publish(ctx context.Context, queueName string, transacao sha
 	return p.canal.PublishWithContext(
 		ctx,
 		"",
-		queueName,
+		shared.FilaTransacoes,
 		false,
 		false,
 		amqp.Publishing{

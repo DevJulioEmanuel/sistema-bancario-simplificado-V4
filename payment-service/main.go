@@ -43,6 +43,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("erro ao conectar no RabbitMQ: %v", err)
 	}
+	defer conn.Close()
 
 	canal, err := conn.Channel()
 	if err != nil {
@@ -50,96 +51,55 @@ func main() {
 	}
 	defer canal.Close()
 
-	filas := []string{"deposito", "saque", "transferencia", "pagamento"}
-	for _, fila := range filas {
-		_, err = canal.QueueDeclare(fila, true, false, false, false, nil)
+	err = canal.Qos(1, 0, false)
+	if err != nil {
+		log.Fatalf("erro ao configurar QoS: %v", err)
+	}
+
+	_, err = canal.QueueDeclare(shared.FilaTransacoes, true, false, false, false, nil)
+	if err != nil {
+		log.Fatalf("erro ao declarar fila: %v", err)
+	}
+
+	msgs, err := canal.Consume(shared.FilaTransacoes, "", false, false, false, false, nil)
+	if err != nil {
+		log.Fatalf("erro ao consumir mensagens: %v", err)
+	}
+
+	log.Println("Serviço iniciado. Aguardando transações em ordem restrita...")
+
+	for msg := range msgs {
+		var transacao shared.TransacaoEvent
+		err := json.Unmarshal(msg.Body, &transacao)
+
 		if err != nil {
-			log.Fatalf("erro ao declarar fila %s: %v", fila, err)
+			log.Printf("erro ao deserializar payload: %v", err)
+			msg.Nack(false, false)
+			continue
 		}
-	}
 
-	deposito, err := canal.Consume("deposito", "", false, false, false, false, nil)
-	if err != nil {
-		log.Fatalf("erro: %v", err)
-	}
-
-	saque, err := canal.Consume("saque", "", false, false, false, false, nil)
-	if err != nil {
-		log.Fatalf("erro: %v", err)
-	}
-
-	transferencia, err := canal.Consume("transferencia", "", false, false, false, false, nil)
-	if err != nil {
-		log.Fatalf("erro: %v", err)
-	}
-
-	pagamento, err := canal.Consume("pagamento", "", false, false, false, false, nil)
-	if err != nil {
-		log.Fatalf("erro: %v", err)
-	}
-
-	for {
-		select {
-		case msg := <-deposito:
-			var transacao shared.TransacaoEvent
-			err := json.Unmarshal(msg.Body, &transacao)
-			if err != nil {
-				log.Printf("erro ao deserializar: %v", err)
-				msg.Nack(false, true)
-				continue
-			}
-			err = proc.ProcessarDeposito(canal, transacao)
-			if err != nil {
-				log.Printf("erro ao processar depósito: %v", err)
-				msg.Nack(false, true)
-				continue
-			}
-			msg.Ack(false)
-		case msg := <-saque:
-			var transacao shared.TransacaoEvent
-			err := json.Unmarshal(msg.Body, &transacao)
-			if err != nil {
-				log.Printf("erro ao deserializar: %v", err)
-				msg.Nack(false, true)
-				continue
-			}
-			err = proc.ProcessarSaque(canal, transacao)
-			if err != nil {
-				log.Printf("erro ao processar saque: %v", err)
-				msg.Nack(false, false)
-				continue
-			}
-			msg.Ack(false)
-		case msg := <-transferencia:
-			var transacao shared.TransacaoEvent
-			err := json.Unmarshal(msg.Body, &transacao)
-			if err != nil {
-				log.Printf("erro ao deserializar: %v", err)
-				msg.Nack(false, true)
-				continue
-			}
-			err = proc.ProcessarTransferencia(canal, transacao)
-			if err != nil {
-				log.Printf("erro ao processar transferência: %v", err)
-				msg.Nack(false, false)
-				continue
-			}
-			msg.Ack(false)
-		case msg := <-pagamento:
-			var transacao shared.TransacaoEvent
-			err := json.Unmarshal(msg.Body, &transacao)
-			if err != nil {
-				log.Printf("erro ao deserializar: %v", err)
-				msg.Nack(false, true)
-				continue
-			}
-			err = proc.ProcessarPagamento(canal, transacao)
-			if err != nil {
-				log.Printf("erro ao processar pagamento: %v", err)
-				msg.Nack(false, false)
-				continue
-			}
-			msg.Ack(false)
+		var processErr error
+		switch transacao.Tipo {
+		case "deposito":
+			processErr = proc.ProcessarDeposito(canal, transacao)
+		case "saque":
+			processErr = proc.ProcessarSaque(canal, transacao)
+		case "transferencia":
+			processErr = proc.ProcessarTransferencia(canal, transacao)
+		case "pagamento":
+			processErr = proc.ProcessarPagamento(canal, transacao)
+		default:
+			log.Printf("tipo de operação desconhecida: %s", transacao.Tipo)
+			msg.Nack(false, false)
+			continue
 		}
+
+		if processErr != nil {
+			log.Printf("erro ao processar %s: %v", transacao.Tipo, processErr)
+			msg.Nack(false, false)
+			continue
+		}
+
+		msg.Ack(false)
 	}
 }

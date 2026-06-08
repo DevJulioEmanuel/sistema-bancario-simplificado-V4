@@ -72,12 +72,12 @@ func (h *ContaHandler) Pagar(c *gin.Context) {
 		return
 	}
 
-	err = h.publisher.Publish(c, shared.FilaPagamento, shared.TransacaoEvent{
+	err = h.publisher.Publish(c, shared.TransacaoEvent{
 		Tipo:            "pagamento",
 		NumeroConta:     numero,
 		Valor:           req.Valor,
 		NumContaDestino: 0,
-		Descricao: req.Descricao,
+		Descricao:       req.Descricao,
 	})
 
 	if err != nil {
@@ -100,7 +100,7 @@ func (h *ContaHandler) Depositar(c *gin.Context) {
 		return
 	}
 
-	err := h.publisher.Publish(c, shared.FilaDeposito, shared.TransacaoEvent{
+	err := h.publisher.Publish(c, shared.TransacaoEvent{
 		Tipo:            "deposito",
 		NumeroConta:     numero,
 		Valor:           req.Valor,
@@ -125,7 +125,7 @@ func (h *ContaHandler) Sacar(c *gin.Context) {
 		return
 	}
 
-	err := h.publisher.Publish(c, shared.FilaSaque, shared.TransacaoEvent{
+	err := h.publisher.Publish(c, shared.TransacaoEvent{
 		Tipo:            "saque",
 		NumeroConta:     numero,
 		Valor:           req.Valor,
@@ -149,7 +149,7 @@ func (h *ContaHandler) Transferir(c *gin.Context) {
 		return
 	}
 
-	err := h.publisher.Publish(c, shared.FilaTransferencia, shared.TransacaoEvent{
+	err := h.publisher.Publish(c, shared.TransacaoEvent{
 		Tipo:            "transferencia",
 		NumeroConta:     numero,
 		Valor:           req.Valor,
