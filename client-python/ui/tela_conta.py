@@ -25,7 +25,6 @@ def escutar_atualizacoes_servidor(numero_conta):
                     _exibir_menu()
                     Banner.espaco()
                     Banner.prompt("O que deseja fazer?")
-
     except Exception:
         pass
 

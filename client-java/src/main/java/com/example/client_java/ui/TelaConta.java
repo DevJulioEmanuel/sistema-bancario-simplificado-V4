@@ -34,13 +34,14 @@ public class TelaConta {
 
         webSocketService.conectar(contaLogada.getNumeroConta(), () -> {
             try {
+                ContaResponse dadosNovos = bancoApiClient.obterDados(contaLogada.getNumeroConta());
+                contaLogada.setSaldo(dadosNovos.saldo()); // sempre atualiza
                 if (!bloquearAtualizacao) {
-                    ContaResponse dadosNovos = bancoApiClient.obterDados(contaLogada.getNumeroConta());
-                    contaLogada.setSaldo(dadosNovos.saldo());
                     renderizarDashboard();
                     exibirMenu();
                 }
             } catch (Exception e) {
+                e.printStackTrace();
             }
         });
 
