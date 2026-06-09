@@ -14,43 +14,10 @@ Esta versão representa a **quarta evolução** do sistema bancário distribuíd
 
 As operações financeiras (depósito, saque, transferência e pagamento) deixaram de ser processadas diretamente pela API e passaram a ser delegadas a um serviço independente — o **payment-service** — que se comunica com a **core-api** exclusivamente via filas, sem nenhum acoplamento direto entre os dois.
 
-```
-  +-----------+      +-----------+
-  |   Cliente |      |   Cliente |
-  |    Java   |      |   Python  |
-  +-----------+      +-----------+
-         \                /
-          \-- HTTP/JSON --/
-                  |
-                  v
-     +------------------------+
-     |        core-api        |
-     |    (Go + Gin + JWT)    |
-     +------------------------+
-          |            ^
-    publica na     consome de
-       fila      fila de retorno
-          |            |
-          v            |
-     +------------------------+
-     |        RabbitMQ        |
-     |   (Message Broker)     |
-     +------------------------+
-          |            ^
-    consome da     publica
-       fila       resultado
-          |            |
-          v            |
-     +------------------------+
-     |    payment-service     |
-     |    (Go Consumer)       |
-     +------------------------+
-                  |
-                  v
-     +------------------------+
-     |         SQLite         |
-     +------------------------+
-```
+
+<div align="center">
+  <img width="40%" alt="Diagrama de Arquitetura" src="https://github.com/user-attachments/assets/60384997-dc8d-4058-a541-b60e058ee899" />
+</div>
 
 ---
 
@@ -61,7 +28,7 @@ As operações financeiras (depósito, saque, transferência e pagamento) deixar
 | Serviço | Responsabilidade |
 |---|---|
 | **core-api** | Recebe requisições HTTP, valida dados, publica operações na fila e responde imediatamente ao cliente |
-| **payment-service** | Consome mensagens das filas, processa as operações financeiras, atualiza saldos e publica o resultado de volta |
+| **payment-service** | Consome mensagens da fila, processa as operações financeiras, atualiza saldos e publica o resultado de volta |
 | **RabbitMQ** | Intermediário de mensagens — garante entrega, persistência e desacoplamento entre os serviços |
 
 ### Fluxo de uma Operação Financeira
@@ -69,13 +36,21 @@ As operações financeiras (depósito, saque, transferência e pagamento) deixar
 ```
 1. Cliente envia POST /contas/1001/depositar
 2. core-api valida a requisição
-3. core-api publica mensagem na fila "deposito"
+3. core-api publica mensagem na fila "transacoes_conta"
 4. core-api responde 202 Accepted ao cliente imediatamente
-5. payment-service consome a mensagem da fila
+5. payment-service consome a mensagem da fila (FIFO garantido)
 6. payment-service processa e atualiza o saldo no banco
-7. payment-service publica resultado na fila "notificacoes"
-8. core-api consome a notificação e a disponibiliza ao cliente
+7. payment-service publica resultado na fila "notificacao"
+8. core-api consome a notificação e notifica o cliente via WebSocket
 ```
+
+### Decisão Arquitetural — Fila Única
+
+Uma decisão importante nesta versão foi o uso de **uma única fila** (`transacoes_conta`) para todas as operações financeiras, em vez de uma fila por tipo de operação.
+
+O motivo é a garantia de **ordenação FIFO**. O RabbitMQ garante FIFO dentro de uma fila, mas não entre filas distintas. Com filas separadas, um saque poderia ser processado antes de um depósito feito anteriormente — o que em um sistema bancário poderia gerar "saldo insuficiente" indevido. Com uma única fila, a ordem de chegada é sempre respeitada.
+
+O tipo da operação é identificado pelo campo `tipoOperacao` dentro da mensagem, e o `payment-service` faz o dispatch correto via `switch`.
 
 ### Operações Síncronas (core-api processa diretamente)
 
@@ -95,29 +70,34 @@ As operações financeiras (depósito, saque, transferência e pagamento) deixar
 
 ---
 
-## 🔔 Sistema de Notificações
+## 🔔 Sistema de Notificações e WebSocket
 
-Uma das decisões arquiteturais desta versão foi implementar um **canal de feedback assíncrono** entre o `payment-service` e o `core-api`.
+Uma das decisões arquiteturais desta versão foi implementar um **canal de feedback assíncrono** entre o `payment-service` e o `core-api`, com entrega em tempo real ao cliente via **WebSocket**.
 
 O problema: como o cliente recebe `202 Accepted` imediatamente, ele não sabe se a operação foi bem-sucedida ou falhou (por exemplo, por saldo insuficiente).
 
-A solução adotada foi um **fluxo de eventos de resposta**:
+A solução adotada combina duas tecnologias:
 
 ```
-payment-service processa → publica resultado na fila "notificacoes"
+payment-service processa → publica resultado na fila "notificacao"
                                           ↓
-                              core-api consome e armazena
+                     core-api consome via consumidor dedicado
                                           ↓
-                              cliente consulta GET /notificacoes
+                     core-api envia via WebSocket para o cliente
 ```
+
+**Fluxo do WebSocket:**
+1. Cliente abre uma conexão WebSocket com a `core-api`
+2. A conexão é registrada no `ClientesHub` associada ao número da conta
+3. Quando o `payment-service` publica o resultado na fila `fila_resposta_pagamentos`, o consumidor do `core-api` recebe
+4. O `core-api` localiza a conexão WebSocket do cliente no Hub e envia o evento `saldo_atualizado` com o novo saldo
 
 Cada notificação contém:
-- Tipo da operação (depósito, saque, transferência, pagamento)
-- Status (sucesso ou falha)
-- Motivo da falha quando aplicável (ex: saldo insuficiente)
-- Data e hora do processamento
+- Tipo do evento (`saldo_atualizado`)
+- Novo saldo após o processamento
+- Status da operação (sucesso ou falha com motivo)
 
-Isso mantém o desacoplamento temporal — o payment-service não precisa conhecer o cliente, apenas publica o resultado na fila.
+Isso mantém o desacoplamento temporal — o `payment-service` não conhece o cliente, apenas publica o resultado na fila.
 
 ---
 
@@ -148,8 +128,6 @@ As **Filas de Mensagens** foram a abordagem escolhida por três razões centrais
 
 **3. Desacoplamento completo.** A `core-api` e o `payment-service` não se conhecem — comunicam-se exclusivamente pelo contrato das mensagens. Isso permite evoluir, substituir ou escalar cada serviço independentemente.
 
-As opções Pub-Sub e Multicast foram descartadas porque o cenário bancário exige entrega garantida para *um* processador específico, não disseminação para múltiplos receptores. O modelo de fila ponto a ponto se alinha melhor com operações financeiras que devem ser processadas exatamente uma vez.
-
 ---
 
 ### Análise de Overhead e Complexidade
@@ -159,12 +137,11 @@ A introdução do RabbitMQ como intermediário trouxe ganhos arquiteturais signi
 **Overhead de desempenho introduzido:**
 
 - Cada operação financeira agora envolve serialização JSON, publicação na fila, persistência em disco pelo broker e deserialização pelo consumidor. O que antes era uma chamada de função direta passou a ter latência adicional de rede e I/O.
-- O cliente não recebe o resultado imediato da operação — precisa consultar as notificações em um segundo momento (padrão *polling*).
 - A conexão com o RabbitMQ adiciona um ponto de falha de infraestrutura: se o broker cair, nenhuma operação financeira pode ser publicada.
 
 **Como o overhead afetou o sistema:**
 
-Na prática, a latência adicional foi imperceptível para o usuário — a `core-api` responde `202 Accepted` em menos de 1ms, enquanto o processamento pelo `payment-service` ocorre em paralelo em poucos milissegundos. O modelo assíncrono transformou uma operação bloqueante em não-bloqueante, melhorando a percepção de desempenho do cliente.
+Na prática, a latência adicional foi imperceptível para o usuário — a `core-api` responde `202 Accepted` em menos de 1ms, enquanto o processamento pelo `payment-service` ocorre em paralelo em poucos milissegundos. O modelo assíncrono transformou uma operação bloqueante em não-bloqueante, melhorando a percepção de desempenho do cliente. O WebSocket eliminou a necessidade de polling — o cliente é notificado instantaneamente quando o processamento termina.
 
 **Estratégias de mitigação:**
 
@@ -174,7 +151,8 @@ Na prática, a latência adicional foi imperceptível para o usuário — a `cor
 | Perda de mensagens | Filas `durable: true` + mensagens `Persistent` |
 | Processamento duplicado | ACK manual — mensagem só é removida após confirmação |
 | Erros de negócio em loop | NACK sem requeue para erros permanentes (saldo insuficiente) |
-| Latência de feedback | Sistema de notificações via fila de retorno |
+| Ordenação entre operações | Fila única `transacoes_conta` com QoS=1 garantindo FIFO estrito |
+| Latência de feedback | WebSocket para notificação em tempo real ao cliente |
 
 Em produção, o overhead do broker seria mitigado com um **cluster RabbitMQ** com replicação de filas, eliminando o ponto único de falha. Para escala horizontal, múltiplas instâncias do `payment-service` poderiam consumir a mesma fila em paralelo, distribuindo a carga automaticamente — algo impossível na arquitetura síncrona original.
 
@@ -236,6 +214,7 @@ Authorization: Bearer <token>
 | **RabbitMQ 3.13** | Message Broker |
 | **SQLite** | Banco de dados |
 | **GORM** | ORM para acesso ao banco |
+| **WebSocket** | Notificações em tempo real |
 | **JWT** | Autenticação |
 | **bcrypt** | Hash de senhas |
 | **Docker Compose** | Orquestração dos serviços |
@@ -250,9 +229,10 @@ Authorization: Bearer <token>
 │   ├── cmd/                # Ponto de entrada
 │   ├── internal/
 │   │   ├── auth/           # Chave JWT
+│   │   ├── consumer/       # Consumidor da fila de resposta + WebSocket hub
 │   │   ├── db/             # Conexão com banco
 │   │   ├── dto/            # Objetos de transferência
-│   │   ├── handler/        # Handlers HTTP
+│   │   ├── handler/        # Handlers HTTP e WebSocket
 │   │   ├── middleware/     # JWT Middleware
 │   │   ├── publisher/      # Publicador RabbitMQ
 │   │   ├── repository/     # Repositórios
@@ -261,7 +241,8 @@ Authorization: Bearer <token>
 │   └── Dockerfile
 ├── payment-service/        # Serviço de pagamento (Go)
 │   ├── internal/
-│   │   └── processor/      # Processadores de transações
+│   │   ├── processor/      # Processadores de transações
+│   │   └── publisher/      # Publicador de respostas e notificações
 │   ├── main.go
 │   └── Dockerfile
 ├── shared/                 # Código compartilhado
@@ -331,6 +312,7 @@ docker compose down -v
 | GET | `/contas/:num/extrato` | Extrato | ✅ |
 | GET | `/contas/:num/rendimento/:meses` | Calcular rendimento | ✅ |
 | GET | `/contas/:num/notificacoes` | Consultar notificações | ✅ |
+| WS | `/ws/:num` | WebSocket — notificações em tempo real | ✅ |
 
 ---
 
@@ -343,3 +325,36 @@ docker compose down -v
 **Cliente Python 3**
 - Interface Textual de Usuário (TUI)
 - Mapeamento dinâmico de chaves JSON
+
+---
+
+## 💻 Como Executar os Clientes
+
+### Cliente Python
+
+**Pré-requisitos:** Python 3.x instalado
+
+```bash
+cd client-python
+pip install -r requirements.txt
+python main.py
+```
+
+---
+
+### Cliente Java
+
+**Pré-requisitos:** Java 21 e IntelliJ IDEA instalados
+
+1. Abra a pasta `client-java` no IntelliJ IDEA
+2. Aguarde o Maven baixar as dependências automaticamente
+3. Localize e execute o arquivo `BancoCliente.java`
+
+Ou via terminal com Maven:
+
+```bash
+cd client-java
+./mvnw spring-boot:run
+```
+
+> Certifique-se de que o servidor (`docker compose up`) está rodando antes de iniciar os clientes.
