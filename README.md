@@ -6,6 +6,8 @@
 
 > **Arquitetura:** Comunicação Indireta via Filas de Mensagens (RabbitMQ)
 
+> **Link do vídeo da apresentação** https://www.youtube.com/watch?v=jaooVOkIBq8 
+
 ---
 
 ## 📌 Visão Geral
